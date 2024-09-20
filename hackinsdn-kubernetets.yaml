@@ -1,0 +1,274 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: entrypoint-configmap
+data:
+  entrypoint.sh: |-
+    #!/bin/bash
+    HOSTNAME=$(hostname)
+    PODINFO=/podinfo
+    EXPECTED_PODS=7
+    MAX_WAIT=300
+    # check if we are ready to export our IP address
+    CUR_WAIT=0
+    while [ ! -d $PODINFO -a $CUR_WAIT -lt $MAX_WAIT ]; do sleep 1; CUR_WAIT=$(($CUR_WAIT+1)); done
+    if [ $CUR_WAIT -eq $MAX_WAIT ]; then echo "timeout waiting for $PODINFO folder"; exit 1; fi
+    grep -w $HOSTNAME /etc/hosts > $PODINFO/hosts-$HOSTNAME
+    # check if all nodes had finished reporting their IP addresses
+    CUR_WAIT=0
+    while [ $(ls -l $PODINFO/hosts-* | wc -l) -ne $EXPECTED_PODS -a $CUR_WAIT -lt $MAX_WAIT ]; do sleep 1; CUR_WAIT=$(($CUR_WAIT+1)); done
+    if [ $CUR_WAIT -eq $MAX_WAIT ]; then echo "timeout waiting for others pod info"; exit 1; fi
+    # if there was a original docker entrypoint, we use it
+    if [ -x /docker-entrypoint.sh ]; then /docker-entrypoint.sh $@; fi
+    # otherwise, just leave tail running
+    /usr/bin/tail -f /dev/null
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kytos
+spec:
+  containers:
+  - name: kytos
+    image: hackinsdn/kytos:latest
+    command:
+    - /bin/entrypoint.sh
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    ports:
+    - containerPort: 8181
+    - containerPort: 6653
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mongo1
+spec:
+  containers:
+  - name: mongo1
+    image: mongo:7.0
+    command:
+    - /bin/entrypoint.sh
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    ports:
+    - containerPort: 27017
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mininet-sec
+  annotations:
+    container.apparmor.security.beta.kubernetes.io/mininet-sec: unconfined
+spec:
+  containers:
+  - name: mininet-sec
+    image: hackinsdn/mininet-sec
+    command:
+    - /bin/entrypoint.sh
+    args: ["/usr/bin/tail", "-f", "/dev/null"]
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    - name: lib-modules
+      mountPath: /lib/modules
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN", "SYS_MODULE", "SYS_ADMIN", "ALL"]
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  - name: lib-modules
+    hostPath:
+      path: /lib/modules
+      type: Directory
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: suricata
+spec:
+  containers:
+  - name: suricata
+    image: hackinsdn/suricata:latest
+    command:
+    - /bin/entrypoint.sh
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    securityContext:
+      capabilities:
+        add: ["ALL"]
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: anomaly-detect
+spec:
+  containers:
+  - name: anomaly-detect
+    image: debian:11
+    command:
+    - /bin/entrypoint.sh
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN"]
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: misp
+spec:
+  containers:
+  - name: misp
+    image: debian:11
+    command:
+    - /bin/entrypoint.sh
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN"]
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres
+spec:
+  containers:
+  - name: postgres
+    image: debian:11
+    command:
+    - /bin/entrypoint.sh
+    volumeMounts:
+    - name: configmap-volume
+      mountPath: /bin/entrypoint.sh
+      readOnly: true
+      subPath: entrypoint.sh
+    - name: shared-storage
+      mountPath: "/podinfo"
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN"]
+  volumes:
+  - name: configmap-volume
+    configMap:
+      defaultMode: 0700
+      name: entrypoint-configmap
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-storage
+  nodeSelector:
+    kubernetes.io/hostname: ids-rn
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mnsec-service
+spec:
+  selector:
+    app: mininet-sec
+  type: NodePort
+  ports:
+  - protocol: TCP
+    port: 8050
+    targetPort: 8050
+    nodePort: 32221
